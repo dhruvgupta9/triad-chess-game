@@ -1,5 +1,7 @@
 # Triad Chess Game
 
+[![CI](https://github.com/dhruvgupta9/triad-chess-game/actions/workflows/ci.yml/badge.svg)](https://github.com/dhruvgupta9/triad-chess-game/actions/workflows/ci.yml)
+
 Triad Chess is a three-player strategy game on an axial hex board. The
 repository is an npm workspace monorepo: a framework-independent rules engine,
 an authoritative multiplayer server, and a browser client that renders the
@@ -219,6 +221,11 @@ Copy `.env.example` to `.env` and adjust only what is needed:
 | `AI_PROVIDER` / `AI_MODEL` / `AI_API_KEY` | local/blank | Optional remote AI integration; local engine AI requires no key. |
 
 ## Checks and build commands
+
+GitHub Actions runs on every push and pull request, using the Node version in
+`.nvmrc` on both Linux and Windows. It installs the lockfile dependencies,
+checks types, builds and tests every workspace, and runs the HTTP/Socket.io
+smoke check. Runs need no repository secrets and have read-only permissions.
 
 Install the exact dependency graph and run the offline checks:
 
