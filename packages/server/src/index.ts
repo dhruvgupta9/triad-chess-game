@@ -84,7 +84,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningTriadSe
 
 export function readPort(value: string | undefined): number {
   if (value === undefined || value.trim() === "") {
-    return 3000;
+    return 3001;
   }
   const port = Number(value);
   if (!Number.isInteger(port) || port < 0 || port > 65535) {

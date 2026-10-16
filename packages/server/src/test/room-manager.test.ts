@@ -4,7 +4,13 @@ import test from "node:test";
 import type { GameState } from "@triad-chess/engine";
 import { getLegalMoves } from "@triad-chess/engine";
 
-import { RoomManager, RoomManagerError, SEATS } from "../index.js";
+import { RoomManager, RoomManagerError, SEATS, readPort } from "../index.js";
+
+test("defaults the server to the documented local port", () => {
+  assert.equal(readPort(undefined), 3001);
+  assert.equal(readPort(""), 3001);
+  assert.equal(readPort("4321"), 4321);
+});
 
 interface TestState {
   currentPlayer: "P0" | "P1" | "P2";
