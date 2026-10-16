@@ -155,6 +155,39 @@ assert.equal(neutral.pieces.some((item) => item.owner === "P1" && item.neutral),
 assert.equal(neutral.currentPlayer, "P2");
 assert.equal(getNextActivePlayer(neutral, "P0"), "P2");
 
+// Neutral pieces are blockers, not capturable material.
+const blockerState = withoutInitialPieces(createInitialGame({ eliminationMode: "neutral" }), [
+  { id: "P0-king", type: "king", owner: "P0", position: "-7,0", hasMoved: false, neutral: false },
+  { id: "P0-rook", type: "rook", owner: "P0", position: "0,1", hasMoved: false, neutral: false },
+  { id: "P1-king", type: "king", owner: "P1", position: "0,7", hasMoved: false, neutral: false },
+  { id: "P1-blocker", type: "rook", owner: "P1", position: "0,2", hasMoved: false, neutral: true },
+  { id: "P2-king", type: "king", owner: "P2", position: "7,0", hasMoved: false, neutral: false }
+]);
+const blockerTargets = getLegalMovesForPiece(blockerState, "P0-rook").map((move) => move.to);
+assert.equal(blockerTargets.includes("0,2"), false);
+assert.equal(blockerTargets.includes("0,3"), false);
+assert.throws(() => applyMove(blockerState, { pieceId: "P0-rook", from: "0,1", to: "0,2" }), /Illegal move/);
+
+const fairnessConfig = createInitialGame({ fairnessBonus: false, coordinationWindow: 4 });
+assert.equal(fairnessConfig.config.fairnessBonus, false);
+assert.equal(fairnessConfig.config.coordinationWindow, 4);
+assert.equal(fairnessConfig.fairness.leader, null);
+assert.equal(fairnessConfig.coordination.focusTarget, null);
+
+const coordinatedState = withoutInitialPieces(createInitialGame(), [
+  { id: "P0-king", type: "king", owner: "P0", position: "-7,0", hasMoved: false, neutral: false },
+  { id: "P0-rook", type: "rook", owner: "P0", position: "-1,1", hasMoved: false, neutral: false },
+  { id: "P1-king", type: "king", owner: "P1", position: "0,4", hasMoved: false, neutral: false },
+  { id: "P2-king", type: "king", owner: "P2", position: "7,0", hasMoved: false, neutral: false }
+]);
+coordinatedState.coordination.recentAttacks = [{ attacker: "P2", target: "P1", turn: 0, kind: "check" }];
+const coordinatedMove = getLegalMovesForPiece(coordinatedState, "P0-rook").find((move) => move.to === "0,1");
+assert.ok(coordinatedMove);
+const coordinated = applyMove(coordinatedState, coordinatedMove);
+assert.equal(coordinated.coordination.focusTarget, "P1");
+assert.equal(coordinated.coordination.coordinatedAttacks.P1, 1);
+assert.equal(coordinated.fairness.defensiveBonus.P1, 1);
+
 // AI difficulty levels always return a legal move without mutating the state.
 const aiState = createInitialGame();
 const serializedBeforeAi = JSON.stringify(aiState);

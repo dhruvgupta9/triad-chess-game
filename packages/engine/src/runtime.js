@@ -193,11 +193,17 @@ function normalizeConfig(config = {}) {
   if (!["queen", "rook", "bishop", "knight"].includes(promotionPiece)) {
     throw new Error("promotionPiece must be queen, rook, bishop, or knight.");
   }
+  const coordinationWindow = config.coordinationWindow ?? 6;
+  if (!Number.isInteger(coordinationWindow) || coordinationWindow < 2 || coordinationWindow > 18) {
+    throw new Error("coordinationWindow must be an integer from 2 to 18.");
+  }
   return {
     eliminationMode,
     startingPlayer,
     pawnDoubleStep: config.pawnDoubleStep !== false,
     promotionPiece,
+    fairnessBonus: config.fairnessBonus !== false,
+    coordinationWindow,
     radius: BOARD_RADIUS
   };
 }
@@ -275,13 +281,19 @@ export function createInitialGame(config = {}) {
       skippedTurns: makeCounterMap(),
       balanceScore: 0,
       rotationViolations: 0,
-      lastPlayer: null
+      lastPlayer: null,
+      leader: null,
+      leaderAttackBonus: makeCounterMap(),
+      defensiveBonus: makeCounterMap()
     },
     coordination: {
       capturesBy: makeCounterMap(),
       checksBy: makeCounterMap(),
       threatsBy: makeCounterMap(),
       sectorVisits: makeSectorCounterMap(),
+      recentAttacks: [],
+      coordinatedAttacks: makeCounterMap(),
+      focusTarget: null,
       lastMove: null
     }
   };
@@ -302,13 +314,17 @@ function cloneState(state) {
       ...state.fairness,
       turnsTaken: { ...state.fairness.turnsTaken },
       movesByPlayer: { ...state.fairness.movesByPlayer },
-      skippedTurns: { ...state.fairness.skippedTurns }
+      skippedTurns: { ...state.fairness.skippedTurns },
+      leaderAttackBonus: { ...state.fairness.leaderAttackBonus },
+      defensiveBonus: { ...state.fairness.defensiveBonus }
     },
     coordination: {
       ...state.coordination,
       capturesBy: { ...state.coordination.capturesBy },
       checksBy: { ...state.coordination.checksBy },
       threatsBy: { ...state.coordination.threatsBy },
+      recentAttacks: state.coordination.recentAttacks.map((event) => ({ ...event })),
+      coordinatedAttacks: { ...state.coordination.coordinatedAttacks },
       sectorVisits: {
         P0: { ...state.coordination.sectorVisits.P0 },
         P1: { ...state.coordination.sectorVisits.P1 },
@@ -376,6 +392,10 @@ function isFriendly(piece, player) {
   return piece && piece.owner === player && !piece.neutral;
 }
 
+function isCapturableBy(piece, player) {
+  return piece && !piece.neutral && piece.owner !== player;
+}
+
 function candidateMove(piece, target, capturedPiece, promotion) {
   const move = {
     pieceId: piece.id,
@@ -403,7 +423,7 @@ function addStepMoves(state, piece, directions, moves, attacksOnly = false) {
       moves.push(candidateMove(piece, target, occupant));
       continue;
     }
-    if (!occupant || !isFriendly(occupant, piece.owner)) {
+    if (!occupant || isCapturableBy(occupant, piece.owner)) {
       moves.push(candidateMove(piece, target, occupant));
     }
   }
@@ -417,7 +437,7 @@ function addJumpMoves(state, piece, directions, moves, attacksOnly = false) {
       continue;
     }
     const occupant = getPieceAt(state, positionKey(target));
-    if (attacksOnly || !occupant || !isFriendly(occupant, piece.owner)) {
+    if (attacksOnly || !occupant || isCapturableBy(occupant, piece.owner)) {
       moves.push(candidateMove(piece, target, occupant));
     }
   }
@@ -443,7 +463,7 @@ function addSlidingMoves(state, piece, directions, moves, attacksOnly = false) {
         moves.push(candidateMove(piece, target, null));
         continue;
       }
-      if (!isFriendly(occupant, piece.owner)) {
+      if (isCapturableBy(occupant, piece.owner)) {
         moves.push(candidateMove(piece, target, occupant));
       }
       break;
@@ -489,7 +509,7 @@ function generatePseudoMoves(state, piece, attacksOnly = false) {
         continue;
       }
       const occupant = getPieceAt(state, positionKey(target));
-      if (occupant && !isFriendly(occupant, piece.owner)) {
+      if (occupant && isCapturableBy(occupant, piece.owner)) {
         const promotion = isPromotionSquare(piece.owner, target) ? state.config.promotionPiece : undefined;
         moves.push(candidateMove(piece, target, occupant, promotion));
       }
@@ -666,7 +686,28 @@ function countThreats(state, player) {
   return count;
 }
 
-function updateTracking(state, player, move, captured, nextPlayer) {
+function materialForPlayer(state, player) {
+  return state.pieces
+    .filter((piece) => piece.owner === player && !piece.neutral)
+    .reduce((total, piece) => total + (PIECE_VALUES[piece.type] ?? 0), 0);
+}
+
+function getLeadingPlayer(state) {
+  const active = PLAYER_IDS.filter((player) => isActivePlayer(state, player));
+  if (active.length === 0) return null;
+  const scores = active.map((player) => ({ player, score: materialForPlayer(state, player) }));
+  const highest = Math.max(...scores.map((entry) => entry.score));
+  const leaders = scores.filter((entry) => entry.score === highest);
+  return leaders.length === 1 ? leaders[0].player : null;
+}
+
+function pseudoMobility(state, player) {
+  return state.pieces
+    .filter((piece) => piece.owner === player && !piece.neutral && isActivePlayer(state, player))
+    .reduce((total, piece) => total + generatePseudoMoves(state, piece).length, 0);
+}
+
+function updateTracking(state, player, move, captured, nextPlayer, leaderBefore) {
   state.fairness.turnsTaken[player] += 1;
   state.fairness.movesByPlayer[player] += 1;
   state.fairness.lastPlayer = player;
@@ -689,6 +730,37 @@ function updateTracking(state, player, move, captured, nextPlayer) {
     sector,
     ...(captured ? { capturedOwner: captured.owner } : {})
   };
+
+  const attackEvents = [];
+  if (captured && isActivePlayer(state, captured.owner)) {
+    attackEvents.push({ attacker: player, target: captured.owner, turn: state.turnNumber, kind: "capture" });
+  }
+  for (const target of checkedPlayers) {
+    attackEvents.push({ attacker: player, target, turn: state.turnNumber, kind: "check" });
+  }
+  const oldestAllowedTurn = state.turnNumber - state.config.coordinationWindow + 1;
+  const recent = state.coordination.recentAttacks
+    .filter((event) => event.turn >= oldestAllowedTurn)
+    .concat(attackEvents);
+  state.coordination.recentAttacks = recent;
+
+  for (const target of new Set(attackEvents.map((event) => event.target))) {
+    const attackers = new Set(recent.filter((event) => event.target === target).map((event) => event.attacker));
+    if (attackers.size < 2) continue;
+    state.coordination.coordinatedAttacks[target] += 1;
+    state.fairness.defensiveBonus[target] += 1;
+  }
+
+  if (state.config.fairnessBonus && leaderBefore && leaderBefore !== player) {
+    const targetedLeader = attackEvents.some((event) => event.target === leaderBefore);
+    if (targetedLeader) state.fairness.leaderAttackBonus[player] += 1;
+  }
+
+  const focusCandidates = PLAYER_IDS
+    .filter((candidate) => state.coordination.coordinatedAttacks[candidate] > 0)
+    .sort((left, right) => state.coordination.coordinatedAttacks[right] - state.coordination.coordinatedAttacks[left]);
+  state.coordination.focusTarget = focusCandidates[0] ?? null;
+  state.fairness.leader = getLeadingPlayer(state);
 }
 
 export function getCurrentPlayer(state) {
@@ -729,6 +801,7 @@ export function applyMove(state, move) {
     throw new Error(`It is ${currentPlayer}'s turn; piece ${piece.id} belongs to ${piece.owner}.`);
   }
   if (piece.neutral) throw new Error(`Piece ${piece.id} is neutral and cannot move.`);
+  const leaderBefore = state.fairness?.leader ?? getLeadingPlayer(state);
   let from;
   let to;
   try {
@@ -779,7 +852,7 @@ export function applyMove(state, move) {
   appliedMove.isCheck = candidateCheck;
   next.moveHistory.push(appliedMove);
   next.lastMove = appliedMove;
-  updateTracking(next, currentPlayer, appliedMove, captured, nextPlayer);
+  updateTracking(next, currentPlayer, appliedMove, captured, nextPlayer, leaderBefore);
   if (next.activePlayers.length === 1) next.winner = next.activePlayers[0];
   return next;
 }
@@ -833,7 +906,24 @@ function evaluateState(state, player, includeMobility = true) {
   if (!isActivePlayer(state, player)) score -= 100000;
   if (state.winner === player) score += 100000;
   if (isInCheck(state, player)) score -= 250;
-  if (includeMobility) score += getLegalMoves(state, player).length * 2;
+  const incomingThreats = countThreats(state, player);
+  score -= incomingThreats * 18;
+  if (includeMobility) {
+    score += pseudoMobility(state, player) * 3;
+    for (const opponent of PLAYER_IDS) {
+      if (opponent === player || !isActivePlayer(state, opponent)) continue;
+      if (isInCheck(state, opponent)) score += 38;
+      /* Count pressure on each rival without recursively generating every
+         rival move. This keeps hard AI responsive while still considering the
+         three-way threat map. */
+      score += countThreats(state, opponent) * 2;
+    }
+  }
+  if (state.config?.fairnessBonus) {
+    score += (state.fairness?.leaderAttackBonus?.[player] ?? 0) * 70;
+    score += (state.fairness?.defensiveBonus?.[player] ?? 0) * 18;
+    if (state.coordination?.focusTarget === player) score -= 45;
+  }
   return score;
 }
 
@@ -844,22 +934,32 @@ function moveHeuristic(state, move) {
     score += captured ? PIECE_VALUES[captured.type] : 50;
   }
   if (move.promotion) score += PIECE_VALUES[move.promotion] - PIECE_VALUES.pawn;
+  if (move.isCheck) score += 40;
   return score;
 }
 
-function searchAi(state, rootPlayer, depth) {
-  if (depth <= 0 || state.winner) return evaluateState(state, rootPlayer, false);
+function searchAi(state, rootPlayer, depth, alpha = -Infinity, beta = Infinity) {
+  if (depth <= 0 || state.winner) return evaluateState(state, rootPlayer, true);
   const player = getCurrentPlayer(state);
   if (!player) return evaluateState(state, rootPlayer);
   const moves = getLegalMoves(state, player);
   if (moves.length === 0) return evaluateState(state, rootPlayer);
   const maximizing = player === rootPlayer;
-  const ordered = [...moves].sort((a, b) => moveHeuristic(state, b) - moveHeuristic(state, a)).slice(0, 18);
+  const ordered = [...moves]
+    .sort((a, b) => moveHeuristic(state, b) - moveHeuristic(state, a))
+    .slice(0, depth > 1 ? 5 : 8);
   let best = maximizing ? -Infinity : Infinity;
   for (const move of ordered) {
     const child = applyMove(state, move);
-    const value = searchAi(child, rootPlayer, depth - 1);
-    best = maximizing ? Math.max(best, value) : Math.min(best, value);
+    const value = searchAi(child, rootPlayer, depth - 1, alpha, beta);
+    if (maximizing) {
+      best = Math.max(best, value);
+      alpha = Math.max(alpha, best);
+    } else {
+      best = Math.min(best, value);
+      beta = Math.min(beta, best);
+    }
+    if (beta <= alpha) break;
   }
   return best;
 }
@@ -874,30 +974,26 @@ export function getAiMove(state, difficulty = "easy", player = getCurrentPlayer(
   const working = state.currentPlayer === player ? state : { ...state, currentPlayer: player };
   const moves = getLegalMoves(working, player);
   if (moves.length === 0) return null;
-  if (normalizedDifficulty === "easy") return moves[0];
-  if (normalizedDifficulty === "medium") {
-    let bestMove = moves[0];
-    let bestScore = -Infinity;
-    for (const move of moves) {
-      const child = applyMove(working, move);
-      const score = evaluateState(child, player) + moveHeuristic(working, move) * 2;
-      if (score > bestScore) {
-        bestScore = score;
-        bestMove = move;
-      }
-    }
-    return bestMove;
+  if (normalizedDifficulty === "easy") {
+    const captures = moves.filter((move) => move.capturedPieceId);
+    const pool = captures.length > 0 && Math.random() < 0.72 ? captures : moves;
+    return pool[Math.floor(Math.random() * pool.length)];
   }
   let bestMove = moves[0];
   let bestScore = -Infinity;
-  const ordered = [...moves].sort((a, b) => moveHeuristic(working, b) - moveHeuristic(working, a)).slice(0, 18);
+  const searchDepth = normalizedDifficulty === "medium" ? 1 : 2;
+  const ordered = [...moves]
+    .sort((a, b) => moveHeuristic(working, b) - moveHeuristic(working, a))
+    .slice(0, normalizedDifficulty === "medium" ? 12 : 8);
+  let alpha = -Infinity;
   for (const move of ordered) {
     const child = applyMove(working, move);
-    const score = searchAi(child, player, 1);
+    const score = searchAi(child, player, searchDepth, alpha, Infinity) + moveHeuristic(working, move);
     if (score > bestScore) {
       bestScore = score;
       bestMove = move;
     }
+    alpha = Math.max(alpha, bestScore);
   }
   return bestMove;
 }

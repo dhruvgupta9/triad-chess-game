@@ -36,6 +36,7 @@ are the source of truth when `make` is not available.
 ```sh
 npm ci
 cp .env.example .env
+cp packages/client/.env.example packages/client/.env
 ```
 
 PowerShell equivalent:
@@ -43,6 +44,7 @@ PowerShell equivalent:
 ```powershell
 npm ci
 Copy-Item .env.example .env
+Copy-Item packages/client/.env.example packages/client/.env
 ```
 
 The checked-in `.env.example` contains development-safe defaults and blank
@@ -97,25 +99,20 @@ the authority even when the client performs optimistic highlighting.
 ### Move and state flow
 
 1. The client creates a room or joins an existing room through the server.
-2. The server assigns one of the active seats (`P0`, `P1`, or `P2`), records
-   the rule/AI settings, and returns a snapshot plus a monotonically
-   increasing game revision.
+2. The server assigns one of the active seats (`P0`, `P1`, or `P2`) and returns
+   a JSON snapshot containing the authoritative engine state.
 3. The client renders the snapshot in Phaser and exposes legal destinations.
-   A selected move is sent with the room/game id, the client-observed
-   revision, source coordinate, destination coordinate, and any promotion
-   choice.
-4. The server checks the revision, current seat, ownership, board bounds, and
-   engine legality. It applies the move through the engine, increments the
-   revision, and broadcasts the authoritative event to every room member.
-5. Clients replace their optimistic state with the authoritative snapshot or
-   event. A stale or illegal request is rejected without mutating the game.
-6. A reconnecting client asks for the current snapshot and resumes from the
-   returned revision. A disconnected seat can be replaced or treated as an AI
-   seat according to the room configuration.
+   A selected move is sent with the room code, source coordinate, destination
+   coordinate, and any promotion choice.
+4. The server checks the current seat, ownership, board bounds, and engine
+   legality before applying the move and broadcasting the new snapshot.
+5. Clients replace their local state with the authoritative snapshot. A
+   malformed, out-of-turn, or illegal request is rejected without mutating the
+   game; reconnecting clients can request `GET /rooms/:code` for a fresh state.
 
 This sequence makes simultaneous browser tabs safe: clients never resolve
-conflicting moves locally, and the server can replay or audit the event stream
-from revisions.
+conflicting moves locally, and every accepted move is represented in the
+engine's JSON move history.
 
 ## Current rules
 
@@ -124,7 +121,7 @@ rules describe the current default board and match contract:
 
 - The board is an axial hex grid of radius 7. A coordinate is written `q,r`,
   with `s = -q-r`; a cell is on the board when
-  `max(abs(q), abs(r), abs(s)) <= 7`. This produces 225 playable cells.
+  `max(abs(q), abs(r), abs(s)) <= 7`. This produces 169 playable cells.
 - Three rotated home edges establish the starting sides for `P0`, `P1`, and
   `P2`. The three seats are symmetric under a 120-degree rotation; seat
   identity is still preserved in serialized state and network events.
@@ -141,53 +138,49 @@ rules describe the current default board and match contract:
   for variants in which those pieces remain as non-turn-taking obstacles.
 - A match ends when the engine's configured victory/terminal condition is met
   (the default competitive flow leaves one active seat). The final snapshot
-  contains the winner, terminal reason, and revision so all clients display
-  the same result.
+  contains the winner and move history so all clients display the same result.
 - The server rejects moves from spectators, eliminated seats, the wrong turn,
-  stale revisions, and malformed coordinates. Clients should show the error
-  and refresh their snapshot rather than retrying a rejected mutation blindly.
+  and malformed coordinates. Clients should show the error and refresh their
+  snapshot rather than retrying a rejected mutation blindly.
 
 Coordinates, rotations, initial-state construction, and move generation live
 in `@triad-chess/engine`; do not duplicate those rules in React or Phaser.
 
 ## AI levels
 
-AI runs through the same engine action interface as a human move and is
-scheduled by the server, so a browser cannot bypass legality checks. A room
-can assign AI to any unoccupied seat and can choose one of these levels:
+AI runs through the same engine action interface as a human move. Local seats
+are scheduled in the browser, and every generated action is still validated by
+the engine before it changes state. The setup screen can assign a bot to any
+local seat and can choose one of these levels:
 
 | Level | Name | Behavior |
 | --- | --- | --- |
 | `human` / `0` | Human | The seat waits for a player action. |
-| `easy` / `1` | Easy | Chooses a legal move with a lightweight/randomized policy; useful for learning the controls. |
-| `medium` / `2` | Medium | Scores material, captures, mobility, and immediate threats with a shallow look-ahead. |
-| `hard` / `3` | Hard | Uses deeper budgeted search (minimax/alpha-beta where available) with the same three-seat evaluation and a deterministic seed when configured. |
+| `easy` / `1` | Easy | Chooses a random legal move, preferring captures when available. |
+| `medium` / `2` | Medium | Uses shallow multi-player minimax with capture ordering and material evaluation. |
+| `hard` / `3` | Hard | Uses bounded beam search plus material, king safety, mobility, rival pressure, and fairness signals. |
 
 AI difficulty is a search/decision budget, not a second rules implementation.
 Every generated action is passed back through the engine and committed by the
-server. `DEFAULT_AI_LEVEL=human` in `.env.example` keeps local rooms human
-controlled unless a room explicitly opts in.
+local session or server. `DEFAULT_AI_LEVEL=human` in `.env.example` keeps
+online rooms human controlled; local seats can opt into a bot in the setup
+screen.
 
 ## Multiplayer flow
 
-The server owns rooms and game revisions. A typical online match is:
+The server owns rooms and authoritative game state. A typical online match is:
 
-1. Host requests a room with a seat map, AI level per seat, and eliminated
-   piece mode.
-2. Server returns a shareable room id and a waiting snapshot. The host can
-   start with bots or wait for up to two other players.
-3. Guests join using the room id. The server assigns the first available
-   human seat and sends each member the same sanitized snapshot.
-4. When the host starts the match, the server initializes the engine and
-   emits a `game-started` snapshot. The first active seat is `P0`.
-5. Clients send move intents over the realtime connection. The server
-   validates and broadcasts `move-applied` with the new revision, captured
+1. Host requests a room and receives a shareable room code plus a waiting
+   snapshot.
+2. Guests join using the room code. The server assigns the first available
+   seat and broadcasts the same snapshot to every connected member.
+3. Clients send move intents over the realtime connection. The server
+   validates and broadcasts `game:move` and `game:state` with the captured
    piece (if any), active seat, and terminal metadata.
-6. If a player leaves, the room follows its replacement policy: reconnect
-   keeps the seat, while a configured bot can take over. Eliminated seats are
-   skipped in turn order.
-7. At game over, the server broadcasts the final snapshot. Clients can keep
-   the room open for a replay/rematch without mutating the completed game.
+4. If a player leaves, the connection is removed and the room broadcasts its
+   updated roster. Eliminated seats are skipped in turn order.
+5. At game over, the server broadcasts the final snapshot. The room can be
+   reset with `game:reset` for a rematch without changing the engine rules.
 
 The transport may be WebSocket-based, but the payload contract remains plain
 JSON so it can also be tested offline and replayed in a CLI or future mobile
@@ -204,6 +197,7 @@ Copy `.env.example` to `.env` and adjust only what is needed:
 | `CLIENT_PORT` | `5173` | Client development-server port. |
 | `PUBLIC_API_URL` | `http://localhost:3001` | Browser API base URL. |
 | `PUBLIC_WS_URL` | `ws://localhost:3001` | Browser realtime URL. |
+| `VITE_SERVER_URL` | `http://localhost:3001` | Socket.io origin used by the Online table flow; configure it in `packages/client/.env`. |
 | `CORS_ORIGIN` | `http://localhost:5173` | Allowed browser origin. |
 | `DEFAULT_AI_LEVEL` | `human` | Default seat policy for new local rooms. |
 | `NEUTRAL_ELIMINATED_PIECES` | `disappear` | `disappear` or `neutral` eliminated-piece behavior. |

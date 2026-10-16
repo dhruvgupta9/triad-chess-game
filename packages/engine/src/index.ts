@@ -58,6 +58,10 @@ export interface GameConfig {
   startingPlayer?: PlayerId;
   pawnDoubleStep?: boolean;
   promotionPiece?: PromotionPiece;
+  /** Enable leader-targeting incentives in fairness/AI evaluation. */
+  fairnessBonus?: boolean;
+  /** Number of recent moves used to detect coordinated focus fire. */
+  coordinationWindow?: number;
   /** Radius is fixed at seven; this optional field is validated for clarity. */
   radius?: number;
 }
@@ -67,6 +71,8 @@ export interface ResolvedGameConfig {
   startingPlayer: PlayerId;
   pawnDoubleStep: boolean;
   promotionPiece: PromotionPiece;
+  fairnessBonus: boolean;
+  coordinationWindow: number;
   radius: 7;
 }
 
@@ -84,6 +90,16 @@ export interface FairnessStats {
   balanceScore: number;
   rotationViolations: number;
   lastPlayer: PlayerId | null;
+  leader: PlayerId | null;
+  leaderAttackBonus: Record<PlayerId, number>;
+  defensiveBonus: Record<PlayerId, number>;
+}
+
+export interface CoordinationEvent {
+  attacker: PlayerId;
+  target: PlayerId;
+  turn: number;
+  kind: "capture" | "check";
 }
 
 export interface CoordinationLastMove {
@@ -99,6 +115,9 @@ export interface CoordinationStats {
   checksBy: Record<PlayerId, number>;
   threatsBy: Record<PlayerId, number>;
   sectorVisits: Record<PlayerId, Record<PlayerId, number>>;
+  recentAttacks: CoordinationEvent[];
+  coordinatedAttacks: Record<PlayerId, number>;
+  focusTarget: PlayerId | null;
   lastMove: CoordinationLastMove | null;
 }
 

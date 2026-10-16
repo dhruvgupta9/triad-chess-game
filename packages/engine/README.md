@@ -33,10 +33,20 @@ turn, self-checking, blocked, or otherwise illegal moves.
 Capturing a king or delivering checkmate eliminates that player. The default `eliminationMode` is
 `"disappear"`, which removes all of the eliminated player's pieces. Set
 `{ eliminationMode: "neutral" }` to keep those pieces on the board as inert,
-neutral obstacles that can still be captured by active players. The next turn
-skips eliminated seats while preserving P0/P1/P2 rotation.
+neutral obstacles. Neutral pieces cannot move or be captured, and they stop
+sliding pieces just like a physical blocker. The next turn skips eliminated
+seats while preserving P0/P1/P2 rotation.
+
+The optional fairness layer tracks the current material leader, leader-targeting
+bonuses, and a rolling window of captures/checks. When two different seats
+repeatedly pressure the same active seat, `coordination.focusTarget` and
+`coordinatedAttacks` expose that focus-fire signal for UI, scoring, or future
+matchmaking rules. Set `fairnessBonus: false` to disable leader-targeting
+incentive counters, or tune `coordinationWindow` from 2 to 18 turns.
 
 `getGameStatus` reports `playing`, `check`, `checkmate`, `stalemate`, or
 `finished`; `isInCheck` and the legal move functions enforce king safety.
-`getAiMove` provides deterministic Easy, material-aware Medium, and depth-two
-Hard move selection.
+`getAiMove` provides capture-biased random Easy moves, shallow multi-player
+minimax Medium moves, and bounded beam-search Hard moves. Hard evaluation
+combines material, king safety, pseudo-mobility, rival pressure, leader-targeting
+bonuses, and the coordinated-attack signal.
