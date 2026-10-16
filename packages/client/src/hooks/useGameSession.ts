@@ -95,6 +95,22 @@ function formatSeat(seat: SeatId): string {
   return PLAYER_META[seat].label;
 }
 
+function seatFromPayload(payload: unknown): SeatId | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const source = payload as Record<string, unknown>;
+  const value = source.seat ?? source.playerId;
+  return value === 'P0' || value === 'P1' || value === 'P2' ? value : null;
+}
+
+interface RoomAck {
+  ok?: boolean;
+  roomCode?: string;
+  code?: string;
+  seat?: string;
+  playerId?: string;
+  error?: { message?: string };
+}
+
 export function useGameSession(): UseGameSessionResult {
   const [mode, setMode] = useState<SessionMode | null>(null);
   const [config, setConfig] = useState<SessionConfig | null>(null);
@@ -102,7 +118,7 @@ export function useGameSession(): UseGameSessionResult {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [animation, setAnimation] = useState<AnimationView | null>(null);
   const [manualHistory, setManualHistory] = useState<MoveView[]>([]);
-  const [room, setRoom] = useState<RoomInfo>({ code: '', connected: false, message: '' });
+  const [room, setRoom] = useState<RoomInfo>({ code: '', connected: false, message: '', localSeat: null });
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isThinking, setIsThinking] = useState(false);
@@ -219,6 +235,10 @@ export function useGameSession(): UseGameSessionResult {
 
   const selectPosition = useCallback((key: string) => {
     if (!game || !config || game.winner || game.eliminated.includes(game.currentPlayer)) return;
+    if (mode === 'online' && room.localSeat !== game.currentPlayer) {
+      setNotice(`It is ${formatSeat(game.currentPlayer)}'s turn. Your seat is ${room.localSeat ?? 'unassigned'}.`);
+      return;
+    }
     const currentSeatConfig = config.seats[game.currentPlayer];
     if (currentSeatConfig?.kind !== 'human') {
       setNotice(`${formatSeat(game.currentPlayer)} is controlled by the ${currentSeatConfig?.difficulty ?? 'AI'} bot.`);
@@ -237,7 +257,7 @@ export function useGameSession(): UseGameSessionResult {
       return;
     }
     setSelectedKey(null);
-  }, [chooseMove, config, game, selectedMoves]);
+  }, [chooseMove, config, game, mode, room.localSeat, selectedMoves]);
 
   const startLocal = useCallback((seats: Record<SeatId, SeatConfig> = DEFAULT_SEATS) => {
     closeSocket();
@@ -250,7 +270,7 @@ export function useGameSession(): UseGameSessionResult {
       setManualHistory([]);
       setAnimation(null);
       remoteMoveKey.current = '';
-      setRoom({ code: '', connected: true, message: 'Local table' });
+      setRoom({ code: '', connected: true, message: 'Local table', localSeat: 'P0' });
       setError(null);
       setNotice('Your table is ready. Select a piece to see its legal moves.');
     } catch (cause) {
@@ -269,16 +289,42 @@ export function useGameSession(): UseGameSessionResult {
     remoteMoveKey.current = '';
     setError(null);
     setNotice(intent === 'create' ? 'Creating your room…' : 'Joining the room…');
-    setRoom({ code: nextConfig.roomCode ?? '', connected: false, message: 'Connecting…' });
+    setRoom({ code: nextConfig.roomCode ?? '', connected: false, message: 'Connecting…', localSeat: null });
 
     const socket = io(SERVER_URL, { transports: ['websocket', 'polling'], autoConnect: false });
     socketRef.current = socket;
     socket.on('connect', () => {
       setRoom((current) => ({ ...current, connected: true, message: 'Connected' }));
       if (intent === 'create') {
-        socket.emit('room:create', { displayName: nextConfig.displayName || 'Player', seats: nextConfig.seats });
+        socket.emit('room:create', { displayName: nextConfig.displayName || 'Player', seats: nextConfig.seats }, (response: RoomAck) => {
+          if (response?.ok === false) {
+            setError(response.error?.message || 'The room could not be created.');
+            return;
+          }
+          const assignedSeat = seatFromPayload(response);
+          if (assignedSeat) {
+            setRoom((current) => ({
+              ...current,
+              code: response.roomCode || response.code || current.code,
+              localSeat: assignedSeat,
+            }));
+          }
+        });
       } else {
-        socket.emit('room:join', { roomCode: nextConfig.roomCode, roomId: nextConfig.roomCode, displayName: nextConfig.displayName || 'Player' });
+        socket.emit('room:join', { roomCode: nextConfig.roomCode, roomId: nextConfig.roomCode, displayName: nextConfig.displayName || 'Player' }, (response: RoomAck) => {
+          if (response?.ok === false) {
+            setError(response.error?.message || 'The room could not be joined.');
+            return;
+          }
+          const assignedSeat = seatFromPayload(response);
+          if (assignedSeat) {
+            setRoom((current) => ({
+              ...current,
+              code: response.roomCode || response.code || current.code,
+              localSeat: assignedSeat,
+            }));
+          }
+        });
       }
     });
     socket.on('connect_error', () => {
@@ -317,7 +363,7 @@ export function useGameSession(): UseGameSessionResult {
     setAnimation(null);
     remoteMoveKey.current = '';
     setManualHistory([]);
-    setRoom({ code: '', connected: false, message: '' });
+    setRoom({ code: '', connected: false, message: '', localSeat: null });
     setError(null);
     setNotice(null);
   }, [closeSocket]);

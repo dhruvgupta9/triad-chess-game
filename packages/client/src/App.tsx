@@ -152,13 +152,16 @@ function GameScreen({ session }: { session: ReturnType<typeof useGameSession> })
   if (!game || !board) return <></>;
   const current = game.currentPlayer;
   const currentConfig = session.config?.seats[current];
+  const waitingForOtherSeat = session.mode === 'online' && session.room.localSeat !== current;
   const status = game.winner
     ? `${PLAYER_META[game.winner].label} wins the table`
     : game.inCheck.includes(current)
       ? `${PLAYER_META[current].label} is in check`
       : session.isThinking
         ? `${PLAYER_META[current].label} is thinking…`
-        : `${PLAYER_META[current].label} to move`;
+        : waitingForOtherSeat
+          ? `${PLAYER_META[current].label} to move · you are ${session.room.localSeat ?? 'unassigned'}`
+          : `${PLAYER_META[current].label} to move`;
   const piecesBySeat = useMemo(() => SEATS.reduce<Record<SeatId, number>>((counts, seat) => {
     counts[seat] = game.pieces.filter((piece) => piece.player === seat && !piece.captured).length;
     return counts;
@@ -185,7 +188,7 @@ function GameScreen({ session }: { session: ReturnType<typeof useGameSession> })
           </div>
         </section>
         <aside className="side-column">
-          <section className="side-section player-section"><div className="side-heading"><p className="eyebrow">THE THREE SEATS</p><span className="small-muted">{game.pieces.length} pieces</span></div><div className="player-list">{SEATS.map((seat) => <PlayerCard key={seat} seat={seat} config={session.config?.seats[seat]} count={piecesBySeat[seat]} current={seat === current} check={game.inCheck.includes(seat)} eliminated={game.eliminated.includes(seat)} winner={game.winner === seat} />)}</div></section>
+           <section className="side-section player-section"><div className="side-heading"><p className="eyebrow">THE THREE SEATS</p><span className="small-muted">{game.pieces.length} pieces</span></div><div className="player-list">{SEATS.map((seat) => <PlayerCard key={seat} seat={seat} config={session.config?.seats[seat]} count={piecesBySeat[seat]} current={seat === current} check={game.inCheck.includes(seat)} eliminated={game.eliminated.includes(seat)} winner={game.winner === seat} local={session.room.localSeat === seat} />)}</div></section>
           <section className="side-section moves-section"><div className="side-heading"><p className="eyebrow">MOVE LOG</p><span className="small-muted">{game.history.length} turns</span></div><div className="move-log" aria-live="polite">{game.history.length === 0 ? <div className="empty-log"><span>◌</span><p>No moves yet.<br /><small>The first line is yours to shape.</small></p></div> : game.history.slice().reverse().map((entry, index) => <MoveRow key={entry.key} entry={entry} index={game.history.length - index} />)}</div></section>
           <section className="side-section quick-section"><p className="eyebrow">TABLE TOOLS</p><div className="quick-actions">{session.mode === 'online' && <button className="tool-button" onClick={() => navigator.clipboard?.writeText(session.room.code).catch(() => undefined)}><span>⌘</span> Copy room code</button>}<button className="tool-button" onClick={session.leave}><span>↩</span> Leave table</button></div></section>
         </aside>
@@ -203,9 +206,9 @@ function Brand(): JSX.Element {
   return <div className="brand"><span className="brand-mark"><i /><i /><i /></span><span>TRIAD <b>CHESS</b></span></div>;
 }
 
-function PlayerCard({ seat, config, count, current, check, eliminated, winner }: { seat: SeatId; config?: SeatConfig; count: number; current: boolean; check: boolean; eliminated: boolean; winner: boolean }): JSX.Element {
+function PlayerCard({ seat, config, count, current, check, eliminated, winner, local }: { seat: SeatId; config?: SeatConfig; count: number; current: boolean; check: boolean; eliminated: boolean; winner: boolean; local: boolean }): JSX.Element {
   const meta = PLAYER_META[seat];
-  return <div className={`player-card ${current ? 'is-current' : ''} ${eliminated ? 'is-eliminated' : ''}`} style={{ '--player-color': meta.color, '--player-soft': meta.soft } as CSSProperties}><div className="player-avatar">{meta.short}</div><div className="player-identity"><strong>{config?.name || meta.label}</strong><span>{config?.kind === 'bot' ? `${(config.difficulty ?? 'medium').replace(/^./, (letter) => letter.toUpperCase())} bot` : 'Human'} · {seat}</span></div><div className="player-status">{winner ? <span className="winner-label">WIN</span> : eliminated ? <span className="eliminated-label">OUT</span> : check ? <span className="check-label">CHECK</span> : current ? <span className="active-label">TURN</span> : <span className="piece-count">{count}</span>}</div></div>;
+  return <div className={`player-card ${current ? 'is-current' : ''} ${eliminated ? 'is-eliminated' : ''}`} style={{ '--player-color': meta.color, '--player-soft': meta.soft } as CSSProperties}><div className="player-avatar">{meta.short}</div><div className="player-identity"><strong>{local ? 'You' : config?.name || meta.label}</strong><span>{config?.kind === 'bot' ? `${(config.difficulty ?? 'medium').replace(/^./, (letter) => letter.toUpperCase())} bot` : 'Human'} · {seat}</span></div><div className="player-status">{winner ? <span className="winner-label">WIN</span> : eliminated ? <span className="eliminated-label">OUT</span> : check ? <span className="check-label">CHECK</span> : current ? <span className="active-label">TURN</span> : <span className="piece-count">{count}</span>}</div></div>;
 }
 
 function MoveRow({ entry, index }: { entry: MoveView; index: number }): JSX.Element {

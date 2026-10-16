@@ -299,6 +299,7 @@ export function applyEngineMove(state: GameState, move: Move): GameState {
 export function aiMove(state: GameState, difficulty: Difficulty, player: SeatId): Move | null {
   const fn = asFn(engineGetAiMove);
   const attempts: unknown[][] = [
+    [state, difficulty, player],
     [state, difficulty],
     [state, player, difficulty],
     [state, { difficulty, player }],

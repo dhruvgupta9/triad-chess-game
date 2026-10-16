@@ -66,6 +66,7 @@ export interface RoomInfo {
   code: string;
   connected: boolean;
   message: string;
+  localSeat: SeatId | null;
 }
 
 export interface SessionConfig {
