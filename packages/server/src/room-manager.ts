@@ -20,12 +20,14 @@ export interface RoomParticipant {
   readonly connectionId: string;
   readonly playerId: PlayerId;
   readonly seat: Seat;
+  readonly displayName: string;
   readonly joinedAt: number;
 }
 
 export interface PublicParticipant {
   readonly playerId: PlayerId;
   readonly seat: Seat;
+  readonly displayName: string;
   readonly connected: true;
 }
 
@@ -161,7 +163,7 @@ export class RoomManager {
     return room ? this.snapshot(room) : undefined;
   }
 
-  joinRoom(roomCode: string, connectionId: string): JoinResult {
+  joinRoom(roomCode: string, connectionId: string, displayName = "Player"): JoinResult {
     const room = this.requireRoom(roomCode);
     const normalizedConnectionId = normalizeConnectionId(connectionId);
 
@@ -185,6 +187,7 @@ export class RoomManager {
       connectionId: normalizedConnectionId,
       playerId: playerIdForSeat(seat),
       seat,
+      displayName: normalizeDisplayName(displayName),
       joinedAt: this.now(),
     };
     room.players.set(seat, participant);
@@ -315,6 +318,7 @@ export class RoomManager {
         .map((seat) => ({
           playerId: room.players.get(seat)!.playerId,
           seat,
+          displayName: room.players.get(seat)!.displayName,
           connected: true as const,
         })),
       playerCount: room.players.size,
@@ -361,4 +365,10 @@ function normalizeConnectionId(connectionId: string): string {
     throw new RoomManagerError("INVALID_REQUEST", "A connection id is required.");
   }
   return connectionId.trim();
+}
+
+function normalizeDisplayName(displayName: string): string {
+  if (typeof displayName !== "string") return "Player";
+  const normalized = displayName.trim().replace(/\s+/g, " ").slice(0, 24);
+  return normalized || "Player";
 }

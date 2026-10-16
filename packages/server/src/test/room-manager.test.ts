@@ -43,14 +43,16 @@ test("creates a room, assigns all three seats, and rejects a fourth player", () 
   assert.equal(room.code, "TEST1");
   assert.equal(room.playerCount, 0);
 
-  const first = manager.joinRoom(room.code, "socket-a");
+  const first = manager.joinRoom(room.code, "socket-a", "Alpha");
   const second = manager.joinRoom(room.code, "socket-b");
   const third = manager.joinRoom(room.code, "socket-c");
 
   assert.equal(first.participant.seat, SEATS[0]);
+  assert.equal(first.participant.displayName, "Alpha");
   assert.equal(second.participant.seat, SEATS[1]);
   assert.equal(third.participant.seat, SEATS[2]);
   assert.deepEqual(third.room.players.map((player) => player.seat), [...SEATS]);
+  assert.equal(third.room.players[0]?.displayName, "Alpha");
   assert.equal(third.room.status, "playing");
 
   assert.throws(

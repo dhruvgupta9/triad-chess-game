@@ -35,7 +35,7 @@ export function createApp(
         );
       }
       const room = manager.createRoom();
-      const joined = manager.joinRoom(room.code, connectionId);
+      const joined = manager.joinRoom(room.code, connectionId, displayNameFrom(request.body));
       response.status(201).json(roomResponse(joined.room, joined.participant, connectionId));
     } catch (error) {
       next(error);
@@ -59,7 +59,7 @@ export function createApp(
   const joinRoom = (request: Request, response: Response, next: NextFunction): void => {
     try {
       const connectionId = optionalConnectionId(request.body) ?? httpConnectionId();
-      const joined = manager.joinRoom(request.params.code, connectionId);
+      const joined = manager.joinRoom(request.params.code, connectionId, displayNameFrom(request.body));
       response.status(200).json(roomResponse(joined.room, joined.participant, connectionId));
     } catch (error) {
       next(error);
@@ -120,7 +120,7 @@ export function createApp(
 
 function roomResponse(
   room: RoomSnapshot,
-  participant?: { playerId: unknown; seat: string },
+  participant?: { playerId: unknown; seat: string; displayName?: string },
   connectionId?: string,
 ): Record<string, unknown> {
   return {
@@ -132,8 +132,9 @@ function roomResponse(
     players: room.players,
     ...(participant
       ? {
-          playerId: participant.playerId,
-          seat: participant.seat,
+           playerId: participant.playerId,
+           seat: participant.seat,
+           displayName: participant.displayName,
           ...(connectionId ? { connectionId } : {}),
         }
       : {}),
@@ -146,6 +147,12 @@ function optionalConnectionId(body: unknown): string | undefined {
     return typeof value === "string" && value.trim() ? value : undefined;
   }
   return undefined;
+}
+
+function displayNameFrom(body: unknown): string {
+  if (typeof body !== "object" || body === null) return "Player";
+  const value = (body as { displayName?: unknown }).displayName;
+  return typeof value === "string" ? value : "Player";
 }
 
 function httpConnectionId(): string {

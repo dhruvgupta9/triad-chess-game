@@ -16,6 +16,7 @@ export interface SocketAckSuccess {
   readonly roomCode?: string;
   readonly playerId?: string;
   readonly seat?: string;
+  readonly displayName?: string;
   readonly move?: Move;
 }
 
@@ -58,7 +59,7 @@ function registerRoomHandlers(io: SocketIOServer, manager: RoomManager, socket: 
         );
       }
       const room = manager.createRoom();
-      const joined = manager.joinRoom(room.code, socket.id);
+      const joined = manager.joinRoom(room.code, socket.id, readDisplayName(_payload));
       socket.join(room.code);
       emitRoomState(io, room.code, joined.room);
       respond(ack, {
@@ -68,6 +69,7 @@ function registerRoomHandlers(io: SocketIOServer, manager: RoomManager, socket: 
         room: joined.room,
         playerId: String(joined.participant.playerId),
         seat: joined.participant.seat,
+        displayName: joined.participant.displayName,
       });
     } catch (error) {
       respondError(socket, error, ack);
@@ -77,7 +79,7 @@ function registerRoomHandlers(io: SocketIOServer, manager: RoomManager, socket: 
   socket.on("room:join", (payload: unknown, ack?: SocketAck) => {
     try {
       const code = readRoomCode(payload);
-      const joined = manager.joinRoom(code, socket.id);
+      const joined = manager.joinRoom(code, socket.id, readDisplayName(payload));
       socket.join(joined.room.code);
       emitRoomState(io, joined.room.code, joined.room);
       respond(ack, {
@@ -87,6 +89,7 @@ function registerRoomHandlers(io: SocketIOServer, manager: RoomManager, socket: 
         room: joined.room,
         playerId: String(joined.participant.playerId),
         seat: joined.participant.seat,
+        displayName: joined.participant.displayName,
       });
     } catch (error) {
       respondError(socket, error, ack);
@@ -197,6 +200,12 @@ function readRoomCode(payload: unknown): string {
     }
   }
   throw new RoomManagerError("INVALID_REQUEST", "A room code is required.");
+}
+
+function readDisplayName(payload: unknown): string {
+  if (typeof payload !== "object" || payload === null) return "Player";
+  const value = (payload as { displayName?: unknown }).displayName;
+  return typeof value === "string" ? value : "Player";
 }
 
 function readMove(payload: unknown): unknown {

@@ -308,6 +308,13 @@ export function useGameSession(): UseGameSessionResult {
               code: response.roomCode || response.code || current.code,
               localSeat: assignedSeat,
             }));
+            setConfig((current) => current ? {
+              ...current,
+              seats: {
+                ...current.seats,
+                [assignedSeat]: { ...current.seats[assignedSeat], name: nextConfig.displayName || 'You' },
+              },
+            } : current);
           }
         });
       } else {
@@ -323,6 +330,13 @@ export function useGameSession(): UseGameSessionResult {
               code: response.roomCode || response.code || current.code,
               localSeat: assignedSeat,
             }));
+            setConfig((current) => current ? {
+              ...current,
+              seats: {
+                ...current.seats,
+                [assignedSeat]: { ...current.seats[assignedSeat], name: nextConfig.displayName || 'You' },
+              },
+            } : current);
           }
         });
       }
