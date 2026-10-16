@@ -1,0 +1,32 @@
+{
+  "name": "triad-chess-game",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A three-player hex-board chess game with local AI and multiplayer support.",
+  "type": "module",
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "packages/engine",
+    "packages/client",
+    "packages/server"
+  ],
+  "engines": {
+    "node": ">=20.18.1 <21",
+    "npm": ">=10.8.0 <11"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev": "concurrently --kill-others-on-fail --names server,client \"npm run dev --workspace=@triad-chess/server\" \"npm run dev --workspace=@triad-chess/client\"",
+    "start": "concurrently --kill-others-on-fail --names server,client \"npm run start --workspace=@triad-chess/server\" \"npm run preview --workspace=@triad-chess/client -- --host 0.0.0.0 --port 5173\"",
+    "start:server": "npm run start --workspace=@triad-chess/server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run build && npm run test --workspaces --if-present",
+    "test:workspaces": "npm run test --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present",
+    "format": "npm run format --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "9.1.2",
+    "typescript": "5.7.2"
+  }
+}
