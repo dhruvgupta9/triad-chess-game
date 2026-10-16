@@ -26,6 +26,8 @@ export class HexBoardScene extends Phaser.Scene {
   private callbacks: BoardCallbacks;
   private model: BoardModel | null = null;
   private boardGraphics?: Phaser.GameObjects.Graphics;
+  private hoverGraphics?: Phaser.GameObjects.Graphics;
+  private origin = { x: 0, y: 0 };
   private pieceLayer?: Phaser.GameObjects.Container;
   private interactiveCells = new Map<string, Phaser.GameObjects.Zone>();
   private cellCenters = new Map<string, PixelPoint>();
@@ -39,9 +41,13 @@ export class HexBoardScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.layout.width = this.scale.width;
+    this.layout.height = this.scale.height;
     this.boardGraphics = this.add.graphics();
+    this.hoverGraphics = this.add.graphics();
     this.pieceLayer = this.add.container(0, 0);
     this.scale.on('resize', this.handleResize, this);
+    this.events.once('shutdown', () => this.scale.off('resize', this.handleResize, this));
     this.input.setTopOnly(true);
     this.redraw();
   }
@@ -78,23 +84,18 @@ export class HexBoardScene extends Phaser.Scene {
     const usableHeight = Math.max(1, height - 40);
     const sourceWidth = Math.max(1, maxX - minX);
     const sourceHeight = Math.max(1, maxY - minY);
-    const scale = Math.min(usableWidth / sourceWidth, usableHeight / sourceHeight);
+    const scale = Math.min(usableWidth / (sourceWidth + 1.8), usableHeight / (sourceHeight + 1.8));
+    this.origin = { x: width / 2 - (minX + maxX) * scale / 2, y: height / 2 - (minY + maxY) * scale / 2 };
     // A point-to-point axial spacing is sqrt(3) in the default engine projection.
-    const radius = Math.max(9, Math.min(44, scale * CELL_RADIUS_RATIO));
+    const radius = scale * CELL_RADIUS_RATIO;
     this.layout = { width, height, radius, minX, minY, scale };
   }
 
   private centerForKey(key: string): PixelPoint {
     const base = pixelFor(positionForKey(key));
-    const { minX, minY, scale, width, height } = this.layout;
-    const points = (this.model?.boardKeys ?? []).map((candidate) => pixelFor(positionForKey(candidate)));
-    const maxX = points.length > 0 ? Math.max(...points.map((point) => point.x)) : minX + 1;
-    const maxY = points.length > 0 ? Math.max(...points.map((point) => point.y)) : minY + 1;
-    const drawnWidth = (maxX - minX) * scale;
-    const drawnHeight = (maxY - minY) * scale;
     return {
-      x: width / 2 - drawnWidth / 2 + (base.x - minX) * scale,
-      y: height / 2 - drawnHeight / 2 + (base.y - minY) * scale,
+      x: this.origin.x + base.x * this.layout.scale,
+      y: this.origin.y + base.y * this.layout.scale,
     };
   }
 
@@ -120,6 +121,7 @@ export class HexBoardScene extends Phaser.Scene {
     this.calculateLayout();
     this.cellCenters.clear();
     this.boardGraphics.clear();
+    this.hoverGraphics?.clear();
     this.interactiveCells.forEach((zone) => zone.destroy());
     this.interactiveCells.clear();
     this.pieceLayer.removeAll(true);
@@ -143,6 +145,11 @@ export class HexBoardScene extends Phaser.Scene {
       this.boardGraphics?.fillStyle(fill, 1);
       this.boardGraphics?.fillPoints(pointsToPairs(points), true);
       this.boardGraphics?.strokePoints(pointsToPairs(points), true);
+      if (key === model.animation?.fromKey || key === model.animation?.toKey) {
+        this.boardGraphics?.lineStyle(2, 0xffd581, 0.7);
+        this.boardGraphics?.strokePoints(pointsToPairs(this.hexPoints(center, this.layout.radius * 0.94)), true);
+        this.boardGraphics?.lineStyle(1, BOARD_EDGE, 0.32);
+      }
       if (isLegal) {
         this.boardGraphics?.lineStyle(3, 0x5ee5bd, 0.95);
         this.boardGraphics?.strokePoints(pointsToPairs(this.hexPoints(center, this.layout.radius * 0.78)), true);
@@ -172,14 +179,13 @@ export class HexBoardScene extends Phaser.Scene {
   }
 
   private drawHover(key: string, active: boolean): void {
-    if (!this.boardGraphics || !this.model || this.model.selectedKey === key || this.model.legalMoveKeys.includes(key)) return;
+    this.hoverGraphics?.clear();
+    if (!this.hoverGraphics || !this.model || this.model.selectedKey === key || this.model.legalMoveKeys.includes(key)) return;
     const center = this.cellCenters.get(key);
     if (!center) return;
     if (active) {
-      this.boardGraphics.lineStyle(2, 0x9bb7d8, 0.64);
-      this.boardGraphics.strokePoints(pointsToPairs(this.hexPoints(center, this.layout.radius * 0.88)), true);
-    } else {
-      this.redraw();
+      this.hoverGraphics.lineStyle(2, 0x9bb7d8, 0.64);
+      this.hoverGraphics.strokePoints(pointsToPairs(this.hexPoints(center, this.layout.radius * 0.88)), true);
     }
   }
 
@@ -187,7 +193,7 @@ export class HexBoardScene extends Phaser.Scene {
     const center = this.cellCenters.get(piece.key);
     if (!center || !this.pieceLayer) return;
     const meta = PLAYER_META[piece.player];
-    const radius = Math.max(8, this.layout.radius * 0.58);
+    const radius = this.layout.radius * 0.65;
     const token = this.add.container(center.x, center.y);
     const shadow = this.add.graphics();
     shadow.fillStyle(0x050914, 0.62);
@@ -216,6 +222,7 @@ export class HexBoardScene extends Phaser.Scene {
   }
 
   private playMoveAnimation(fromKey: string, toKey: string, captureKey: string | null): void {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const from = this.cellCenters.get(fromKey);
     const to = this.cellCenters.get(toKey);
     if (!from || !to || !this.pieceLayer) return;
@@ -256,7 +263,7 @@ function colorNumber(hex: string): number {
 
 function pieceGlyph(type: string): string {
   const normalized = type.toLowerCase();
-  if (normalized.includes('king') || normalized.includes('leader')) return '♛';
+  if (normalized.includes('king') || normalized.includes('leader')) return '♔';
   if (normalized.includes('queen')) return '♕';
   if (normalized.includes('knight') || normalized.includes('horse')) return '♞';
   if (normalized.includes('bishop')) return '♝';

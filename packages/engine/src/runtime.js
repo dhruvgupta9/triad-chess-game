@@ -612,7 +612,9 @@ function simulateMove(state, move) {
   const next = cloneState(state);
   const moving = getPieceById(next, move.pieceId);
   const promotion = moving ? resolvedPromotion(next, moving, move) : undefined;
-  applyRawMove(next, move, promotion);
+  const captured = applyRawMove(next, move, promotion);
+  // King capture removes (or neutralizes) the entire army before safety is checked.
+  if (captured?.type === "king") eliminatePlayer(next, captured.owner);
   return next;
 }
 
@@ -624,7 +626,10 @@ export function getLegalMovesForPiece(state, pieceOrId) {
   if (state?.winner || activeCount <= 1 || !piece || piece.neutral || !isActivePlayer(state, piece.owner)) {
     return [];
   }
-  const pseudo = generatePseudoMoves(state, piece);
+  const pseudo = generatePseudoMoves(state, piece).flatMap((move) => move.promotion
+    ? [state.config.promotionPiece, ...["queen", "rook", "bishop", "knight"].filter((type) => type !== state.config.promotionPiece)]
+      .map((promotion) => ({ ...move, promotion }))
+    : [move]);
   return pseudo.filter((move) => {
     const next = simulateMove(state, move);
     return !isInCheck(next, piece.owner);
@@ -838,18 +843,18 @@ export function applyMove(state, move) {
     appliedMove.eliminatedPlayer = captured.owner;
   }
   let nextPlayer = getNextActivePlayer(next, currentPlayer);
-  const candidateCheck = nextPlayer ? isInCheck(next, nextPlayer) : false;
-  if (nextPlayer && isActivePlayer(next, nextPlayer)) {
+  while (next.activePlayers.length > 1 && nextPlayer && isActivePlayer(next, nextPlayer)) {
+    const candidateCheck = isInCheck(next, nextPlayer);
     const candidateHasKing = next.pieces.some((piece) => piece.owner === nextPlayer && piece.type === "king" && !piece.neutral);
     const candidateIsCheckmated = candidateCheck && getLegalMoves(next, nextPlayer).length === 0;
     if (!candidateHasKing || candidateIsCheckmated) {
       eliminatePlayer(next, nextPlayer);
       appliedMove.eliminatedPlayer ??= nextPlayer;
       nextPlayer = getNextActivePlayer(next, currentPlayer);
-    }
+    } else break;
   }
   next.currentPlayer = nextPlayer ?? currentPlayer;
-  appliedMove.isCheck = candidateCheck;
+  appliedMove.isCheck = nextPlayer ? isInCheck(next, nextPlayer) : false;
   next.moveHistory.push(appliedMove);
   next.lastMove = appliedMove;
   updateTracking(next, currentPlayer, appliedMove, captured, nextPlayer, leaderBefore);

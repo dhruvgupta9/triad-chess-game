@@ -216,12 +216,12 @@ function readMove(payload: unknown): unknown {
 }
 
 function respond(ack: SocketAck | undefined, response: SocketAckSuccess): void {
-  ack?.(response);
+  if (typeof ack === "function") ack(response);
 }
 
 function respondError(socket: Socket, error: unknown, ack?: SocketAck): void {
   const normalized = asRoomManagerError(error);
   const response: SocketAckFailure = { ok: false, error: normalized.toJSON() };
-  ack?.(response);
+  if (typeof ack === "function") ack(response);
   socket.emit("server:error", response.error);
 }

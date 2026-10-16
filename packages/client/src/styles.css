@@ -187,6 +187,36 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .waiting-card .button { min-width: 140px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.quick-actions { flex-wrap: wrap; }
+.tool-button { min-height: 40px; font-size: 11px; color: #a9bdd8; }
+.tool-button:disabled { opacity: .4; cursor: not-allowed; }
+.turn-pill { max-width: 100%; white-space: normal; line-height: 1.6; }
+.rules-guide { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 15px; color: #a7b8d0; font-size: 12px; line-height: 1.75; }
+.rules-guide summary { color: #c5ddf4; cursor: pointer; font-weight: 700; padding: 5px 0; }
+.rules-guide summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.rules-guide dt { color: #d5e6fb; font-weight: 700; margin-top: 12px; }
+.rules-guide dd { margin: 3px 0 0; }
+.rules-guide form .button { margin-top: 10px; }
+.board-loading { min-height: 460px; display: grid; place-items: center; color: var(--muted); }
+.board-overlay { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(8, 13, 26, .88); backdrop-filter: blur(5px); }
+.board-overlay h2 { font-size: 32px; margin: 14px 0 0; }
+.board-overlay p { color: #a7b8d0; font-size: 13px; margin-bottom: 25px; }
+.result-card, .promotion-card { margin: 18px 0; padding: 22px; border: 1px solid var(--line-bright); border-radius: 12px; background: var(--surface); }
+.result-card h2, .promotion-card h2 { margin: 0; font-size: 23px; }
+.result-card p, .promotion-card p, .restart-confirm p { color: #a7b8d0; font-size: 13px; line-height: 1.6; }
+.promotion-card .button { text-transform: capitalize; }
+.restart-confirm { margin-top: 16px; }
+.player-identity strong { font-size: 13px; }
+.player-identity span, .player-status, .small-muted { font-size: 11px; color: #95a9c7; }
+.move-row { min-height: 34px; font-size: 12px; }
+.notice-banner, .error-banner { font-size: 13px; }
+.turn-explainer b { font-size: 13px; }
+.turn-explainer small { font-size: 12px; }
+.board-legend { color: #9eafc8; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
 @media (max-width: 1100px) {
   .setup-layout { grid-template-columns: minmax(0, 1fr) 410px; gap: 55px; }
   .hero-rings { right: -55px; transform: scale(.76); transform-origin: bottom right; }

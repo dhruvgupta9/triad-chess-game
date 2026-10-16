@@ -232,6 +232,9 @@ export class RoomManager {
   submitMove(roomCode: string, connectionId: string, rawMove: unknown): MoveResult {
     const room = this.requireRoom(roomCode);
     const participant = this.requireParticipant(room, connectionId);
+    if (!this.isReady(room)) {
+      throw new RoomManagerError("ROOM_NOT_READY", "Waiting for all active players to join the table.");
+    }
     const turnPlayer = this.currentPlayerResolver(room.state);
     const turnSeat = seatForPlayerId(turnPlayer);
 
@@ -258,11 +261,9 @@ export class RoomManager {
     return { room: this.snapshot(room), participant, move };
   }
 
-  resetRoom(roomCode: string, connectionId?: string): RoomSnapshot {
+  resetRoom(roomCode: string, connectionId: string): RoomSnapshot {
     const room = this.requireRoom(roomCode);
-    if (connectionId !== undefined) {
-      this.requireParticipant(room, connectionId);
-    }
+    this.requireParticipant(room, connectionId);
 
     room.state = this.gameFactory();
     room.updatedAt = this.now();
@@ -323,11 +324,16 @@ export class RoomManager {
         })),
       playerCount: room.players.size,
       maxPlayers: this.maxPlayers,
-      status: room.players.size === this.maxPlayers ? "playing" : "waiting",
+      status: this.isReady(room) ? "playing" : "waiting",
       currentPlayer: player ?? null,
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
     };
+  }
+
+  private isReady(room: StoredRoom): boolean {
+    const requiredSeats = room.state.activePlayers ?? SEATS.slice(0, this.maxPlayers);
+    return requiredSeats.every((seat) => room.players.has(seat));
   }
 }
 

@@ -48,6 +48,7 @@ export interface GameView {
   inCheck: SeatId[];
   winner: SeatId | null;
   boardKeys: string[];
+  stalemate: boolean;
 }
 
 export interface BoardModel {
@@ -67,6 +68,8 @@ export interface RoomInfo {
   connected: boolean;
   message: string;
   localSeat: SeatId | null;
+  playerCount?: number;
+  ready?: boolean;
 }
 
 export interface SessionConfig {

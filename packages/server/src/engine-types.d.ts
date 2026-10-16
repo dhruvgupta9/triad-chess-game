@@ -18,6 +18,7 @@ declare module "@triad-chess/engine" {
 
   export interface GameState {
     currentPlayer: PlayerId;
+    activePlayers?: PlayerId[];
     [key: string]: unknown;
   }
 

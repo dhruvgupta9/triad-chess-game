@@ -7,6 +7,7 @@ import {
   getLegalMoves as engineGetLegalMoves,
   getLegalMovesForPiece as engineGetLegalMovesForPiece,
   getSectorForPosition,
+  isInCheck,
   parsePosition,
   positionKey,
 } from '@triad-chess/engine';
@@ -204,12 +205,7 @@ export function eliminatedOf(state: GameState): SeatId[] {
 }
 
 export function inCheckOf(state: GameState): SeatId[] {
-  const source = recordOf(state);
-  const direct = readSeatList(source.inCheck ?? source.check ?? source.checkPlayers ?? source.checks);
-  if (direct.length > 0) return direct;
-  const current = currentPlayerOf(state);
-  const lastMove = recordOf(source.lastMove);
-  return lastMove.isCheck === true ? [current] : [];
+  return (['P0', 'P1', 'P2'] as SeatId[]).filter((seat) => isInCheck(state, seat));
 }
 
 export function winnerOf(state: GameState): SeatId | null {

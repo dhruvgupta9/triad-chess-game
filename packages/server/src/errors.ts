@@ -3,6 +3,7 @@ export type RoomErrorCode =
   | "INVALID_ROOM_CODE"
   | "ROOM_NOT_FOUND"
   | "ROOM_FULL"
+  | "ROOM_NOT_READY"
   | "ALREADY_IN_ROOM"
   | "NOT_IN_ROOM"
   | "NO_SEAT"
@@ -51,6 +52,7 @@ export function statusForRoomError(code: RoomErrorCode): number {
     case "ROOM_NOT_FOUND":
       return 404;
     case "ROOM_FULL":
+    case "ROOM_NOT_READY":
       return 409;
     case "ALREADY_IN_ROOM":
     case "NOT_IN_ROOM":

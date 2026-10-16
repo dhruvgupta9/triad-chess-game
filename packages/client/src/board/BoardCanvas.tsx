@@ -57,5 +57,5 @@ export function BoardCanvas({ model, onPositionClick }: BoardCanvasProps): JSX.E
     sceneRef.current?.setModel(model);
   }, [model]);
 
-  return <div className="board-canvas" ref={hostRef} aria-label="Triad Chess board" role="application" />;
+  return <div className="board-canvas" ref={hostRef} aria-label="Triad Chess board. Keyboard play is available in Table tools." role="img" />;
 }

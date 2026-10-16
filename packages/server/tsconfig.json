@@ -5,9 +5,6 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "baseUrl": ".",
-    "paths": {
-      "@triad-chess/engine": ["src/engine-types.d.ts"]
-    },
     "rootDir": "src",
     "outDir": "dist",
     "declaration": true,

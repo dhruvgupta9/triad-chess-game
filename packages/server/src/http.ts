@@ -92,10 +92,10 @@ export function createApp(
     try {
       const body = request.body === undefined ? {} : asObject(request.body);
       const connectionId = body.connectionId;
-      const room = manager.resetRoom(
-        request.params.code,
-        typeof connectionId === "string" ? connectionId : undefined,
-      );
+      if (typeof connectionId !== "string" || !connectionId.trim()) {
+        throw new RoomManagerError("INVALID_REQUEST", "connectionId is required to reset a room.");
+      }
+      const room = manager.resetRoom(request.params.code, connectionId);
       response.status(200).json(roomResponse(room));
     } catch (error) {
       next(error);

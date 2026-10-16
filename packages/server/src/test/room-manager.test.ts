@@ -90,6 +90,12 @@ test("enforces the engine current player before applying a move", () => {
 
   assert.throws(
     () => manager.submitMove(room.code, second.participant.connectionId, { from: "a", to: "b" }),
+    (error: unknown) => error instanceof RoomManagerError && error.code === "ROOM_NOT_READY",
+  );
+
+  manager.joinRoom(room.code, "socket-c");
+  assert.throws(
+    () => manager.submitMove(room.code, second.participant.connectionId, { from: "a", to: "b" }),
     (error: unknown) => error instanceof RoomManagerError && error.code === "NOT_YOUR_TURN",
   );
 
@@ -119,6 +125,8 @@ test("uses the engine as the authoritative move validator", () => {
   const manager = new RoomManager({ codeGenerator: () => "ENGINE1" });
   const room = manager.createRoom();
   const first = manager.joinRoom(room.code, "socket-a");
+  manager.joinRoom(room.code, "socket-b");
+  manager.joinRoom(room.code, "socket-c");
 
   assert.throws(
     () =>
@@ -135,4 +143,31 @@ test("uses the engine as the authoritative move validator", () => {
   const result = manager.submitMove(room.code, first.participant.connectionId, legalMove);
   assert.equal(result.room.state.turnNumber, 1);
   assert.equal(result.room.currentPlayer, "P1");
+});
+
+test("a waiting room rejects moves without changing the game", () => {
+  const manager = new RoomManager();
+  const room = manager.createRoom();
+  manager.joinRoom(room.code, "host");
+  const move = getLegalMoves(room.state)[0];
+  assert.throws(() => manager.submitMove(room.code, "host", move),
+    (error: unknown) => error instanceof RoomManagerError && error.code === "ROOM_NOT_READY");
+  assert.equal(manager.getRoom(room.code)?.state.turnNumber, 0);
+  manager.joinRoom(room.code, "guest-1");
+  manager.joinRoom(room.code, "guest-2");
+  manager.disconnect("guest-2");
+  assert.equal(manager.getRoom(room.code)?.status, "waiting");
+  assert.throws(() => manager.submitMove(room.code, "host", move),
+    (error: unknown) => error instanceof RoomManagerError && error.code === "ROOM_NOT_READY");
+});
+
+test("outsiders cannot reset a room", () => {
+  const manager = new RoomManager();
+  const room = manager.createRoom();
+  manager.joinRoom(room.code, "host");
+  assert.throws(() => manager.resetRoom(room.code, "outsider"),
+    (error: unknown) => error instanceof RoomManagerError && error.code === "NOT_IN_ROOM");
+  assert.throws(() => manager.resetRoom(room.code, undefined as unknown as string),
+    (error: unknown) => error instanceof RoomManagerError && error.code === "INVALID_REQUEST");
+  assert.equal(manager.getRoom(room.code)?.state, room.state);
 });

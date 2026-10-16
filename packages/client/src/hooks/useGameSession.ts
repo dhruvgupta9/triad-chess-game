@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
-import type { GameState, Move } from '@triad-chess/engine';
+import type { GameState, Move, PromotionPiece } from '@triad-chess/engine';
 import {
-  aiMove,
   allLegalMoves,
   applyEngineMove,
   currentPlayerOf,
@@ -43,6 +42,15 @@ interface UseGameSessionResult {
   error: string | null;
   notice: string | null;
   isThinking: boolean;
+  paused: boolean;
+  canUndo: boolean;
+  promotionMove: Move | null;
+  togglePause: () => void;
+  undo: () => void;
+  restart: () => void;
+  playMove: (move: Move) => void;
+  promote: (piece: PromotionPiece) => void;
+  cancelPromotion: () => void;
   startLocal: (seats?: Record<SeatId, SeatConfig>) => void;
   startOnline: (config: SessionConfig, intent: 'create' | 'join') => void;
   selectPosition: (key: string) => void;
@@ -122,6 +130,9 @@ export function useGameSession(): UseGameSessionResult {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isThinking, setIsThinking] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [promotionMove, setPromotionMove] = useState<Move | null>(null);
+  const undoStates = useRef<GameState[]>([]);
   const socketRef = useRef<Socket | null>(null);
   const animationNonce = useRef(0);
   const remoteMoveKey = useRef('');
@@ -131,11 +142,13 @@ export function useGameSession(): UseGameSessionResult {
     const pieces = readPieces(state);
     const rawHistory = readHistory(state);
     const history = rawHistory.length > 0 ? rawHistory : manualHistory;
+    const legalMoves = allLegalMoves(state);
     return {
       raw: state,
       currentPlayer: currentPlayerOf(state),
       pieces,
-      legalMoves: allLegalMoves(state),
+      legalMoves,
+      stalemate: !state.winner && legalMoves.length === 0 && !inCheckOf(state).includes(state.currentPlayer),
       history,
       eliminated: eliminatedOf(state),
       inCheck: inCheckOf(state),
@@ -178,6 +191,7 @@ export function useGameSession(): UseGameSessionResult {
     if (!next) return false;
     setState(next);
     setSelectedKey(null);
+    setPromotionMove(null);
     const lastMove = (next as unknown as Record<string, unknown>).lastMove as Move | null | undefined;
     if (lastMove) {
       const fields = positionForMove(lastMove);
@@ -197,6 +211,7 @@ export function useGameSession(): UseGameSessionResult {
   const commitLocalMove = useCallback((move: Move, sourceState: GameState, actor: SeatId) => {
     try {
       const next = applyEngineMove(sourceState, move);
+      undoStates.current.push(sourceState);
       const moveInfo = moveView(move, manualHistory.length);
       const { fromKey, toKey, captureKey } = positionForMove(move);
       animationNonce.current += 1;
@@ -205,6 +220,7 @@ export function useGameSession(): UseGameSessionResult {
       setState(next);
       setSelectedKey(null);
       setError(null);
+      setNotice(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'That move could not be applied.');
     }
@@ -217,24 +233,42 @@ export function useGameSession(): UseGameSessionResult {
       return;
     }
     const code = room.code || config?.roomCode || '';
-    socket.emit('game:move', { roomCode: code, roomId: code, move }, (response: { ok?: boolean; error?: { message?: string } }) => {
-      if (response?.ok === false) setError(response.error?.message || 'The server rejected that move.');
+    socket.timeout(8000).emit('game:move', { roomCode: code, roomId: code, move }, (timeout: Error | null, response: { ok?: boolean; error?: { message?: string } }) => {
+      if (socketRef.current !== socket) return;
+      setNotice(null);
+      if (timeout) setError('Move confirmation timed out. Check the board before trying again.');
+      else if (response?.ok === false) setError(response.error?.message || 'The server rejected that move.');
     });
     setSelectedKey(null);
     setNotice('Move sent — waiting for the room to confirm it.');
   }, [config?.roomCode, room.code]);
 
   const chooseMove = useCallback((move: Move) => {
-    if (!state || !config || !game) return;
+    if (!state || !config || !game || paused || game.winner || game.stalemate || promotionMove) return;
+    if (config.seats[game.currentPlayer].kind !== 'human') return;
+    if (mode === 'online' && (!room.connected || !room.ready || room.localSeat !== game.currentPlayer)) return;
+    if (move.promotion) {
+      setPromotionMove(move);
+      return;
+    }
     if (mode === 'online') {
       sendOnlineMove(move);
       return;
     }
     commitLocalMove(move, state, game.currentPlayer);
-  }, [commitLocalMove, config, game, mode, sendOnlineMove, state]);
+  }, [commitLocalMove, config, game, mode, sendOnlineMove, state, paused, room, promotionMove]);
+
+  const promote = useCallback((piece: PromotionPiece) => {
+    if (!promotionMove || !state || !game || paused) return;
+    const move = { ...promotionMove, promotion: piece };
+    setPromotionMove(null);
+    if (mode === 'online') sendOnlineMove(move);
+    else commitLocalMove(move, state, game.currentPlayer);
+  }, [promotionMove, state, game, paused, mode, sendOnlineMove, commitLocalMove]);
 
   const selectPosition = useCallback((key: string) => {
-    if (!game || !config || game.winner || game.eliminated.includes(game.currentPlayer)) return;
+    if (!game || !config || paused || promotionMove || game.winner || game.stalemate || game.eliminated.includes(game.currentPlayer)) return;
+    if (mode === 'online' && (!room.connected || !room.ready)) return;
     if (mode === 'online' && room.localSeat !== game.currentPlayer) {
       setNotice(`It is ${formatSeat(game.currentPlayer)}'s turn. Your seat is ${room.localSeat ?? 'unassigned'}.`);
       return;
@@ -257,7 +291,7 @@ export function useGameSession(): UseGameSessionResult {
       return;
     }
     setSelectedKey(null);
-  }, [chooseMove, config, game, mode, room.localSeat, selectedMoves]);
+  }, [chooseMove, config, game, mode, room, selectedMoves, paused, promotionMove]);
 
   const startLocal = useCallback((seats: Record<SeatId, SeatConfig> = DEFAULT_SEATS) => {
     closeSocket();
@@ -266,6 +300,9 @@ export function useGameSession(): UseGameSessionResult {
       setMode('local');
       setConfig({ mode: 'local', seats: copySeats(seats) });
       setState(initial);
+      setPaused(false);
+      setPromotionMove(null);
+      undoStates.current = [];
       setSelectedKey(null);
       setManualHistory([]);
       setAnimation(null);
@@ -283,6 +320,9 @@ export function useGameSession(): UseGameSessionResult {
     setMode('online');
     setConfig({ ...nextConfig, seats: copySeats(nextConfig.seats) });
     setState(null);
+    setPaused(false);
+    setPromotionMove(null);
+    undoStates.current = [];
     setSelectedKey(null);
     setManualHistory([]);
     setAnimation(null);
@@ -291,12 +331,16 @@ export function useGameSession(): UseGameSessionResult {
     setNotice(intent === 'create' ? 'Creating your room…' : 'Joining the room…');
     setRoom({ code: nextConfig.roomCode ?? '', connected: false, message: 'Connecting…', localSeat: null });
 
-    const socket = io(SERVER_URL, { transports: ['websocket', 'polling'], autoConnect: false });
+    // Seats belong to a connection. Reconnecting must not silently create another room
+    // or take a different player's seat; the player can explicitly rejoin from setup.
+    const socket = io(SERVER_URL, { transports: ['websocket', 'polling'], autoConnect: false, reconnection: false, timeout: 10000 });
     socketRef.current = socket;
     socket.on('connect', () => {
       setRoom((current) => ({ ...current, connected: true, message: 'Connected' }));
       if (intent === 'create') {
-        socket.emit('room:create', { displayName: nextConfig.displayName || 'Player', seats: nextConfig.seats }, (response: RoomAck) => {
+        socket.timeout(10000).emit('room:create', { displayName: nextConfig.displayName || 'Player', seats: nextConfig.seats }, (timeout: Error | null, response: RoomAck) => {
+          if (socketRef.current !== socket) return;
+          if (timeout) { setError('Creating the room timed out. Return to setup and try again.'); return; }
           if (response?.ok === false) {
             setError(response.error?.message || 'The room could not be created.');
             return;
@@ -318,7 +362,9 @@ export function useGameSession(): UseGameSessionResult {
           }
         });
       } else {
-        socket.emit('room:join', { roomCode: nextConfig.roomCode, roomId: nextConfig.roomCode, displayName: nextConfig.displayName || 'Player' }, (response: RoomAck) => {
+        socket.timeout(10000).emit('room:join', { roomCode: nextConfig.roomCode, roomId: nextConfig.roomCode, displayName: nextConfig.displayName || 'Player' }, (timeout: Error | null, response: RoomAck) => {
+          if (socketRef.current !== socket) return;
+          if (timeout) { setError('Joining the room timed out. Return to setup and try again.'); return; }
           if (response?.ok === false) {
             setError(response.error?.message || 'The room could not be joined.');
             return;
@@ -345,7 +391,11 @@ export function useGameSession(): UseGameSessionResult {
       setRoom((current) => ({ ...current, connected: false, message: 'Connection failed' }));
       setError(`Could not reach the game server at ${SERVER_URL}.`);
     });
-    socket.on('disconnect', () => setRoom((current) => ({ ...current, connected: false, message: 'Disconnected' })));
+    socket.on('disconnect', () => {
+      setRoom((current) => ({ ...current, connected: false, ready: false, localSeat: null, message: 'Disconnected' }));
+      setPromotionMove(null);
+      setError('Connection lost. Return to setup and join with the room code. Empty rooms close when everyone leaves.');
+    });
     socket.onAny((event: string, payload: unknown) => {
       const receivedCode = roomCodeFrom(payload);
       if (receivedCode) setRoom((current) => ({ ...current, code: receivedCode }));
@@ -360,6 +410,18 @@ export function useGameSession(): UseGameSessionResult {
         setNotice(event === 'room:created' ? 'Room created. Share the code with your opponents.' : 'Joined the room. Waiting for the game to start.');
       }
       if (['room:state', 'game:state', 'game:started', 'state', 'room:updated'].includes(event)) {
+        const snapshot = payload as { players?: { seat: SeatId; displayName: string }[]; playerCount?: number; status?: string };
+        if (Array.isArray(snapshot.players)) {
+          setRoom((current) => ({ ...current, playerCount: snapshot.playerCount, ready: snapshot.status === 'playing' }));
+          setConfig((current) => {
+            if (!current) return current;
+            const seats = copySeats(current.seats);
+            for (const seat of Object.keys(seats) as SeatId[]) {
+              seats[seat].name = snapshot.players?.find((player) => player.seat === seat)?.displayName || 'Open seat';
+            }
+            return { ...current, seats };
+          });
+        }
         if (setRemoteState(payload)) setNotice(null);
       }
       // A few lightweight servers send a state directly with a move acknowledgement.
@@ -373,6 +435,9 @@ export function useGameSession(): UseGameSessionResult {
     setMode(null);
     setConfig(null);
     setState(null);
+    setPaused(false);
+    setPromotionMove(null);
+    undoStates.current = [];
     setSelectedKey(null);
     setAnimation(null);
     remoteMoveKey.current = '';
@@ -383,27 +448,75 @@ export function useGameSession(): UseGameSessionResult {
   }, [closeSocket]);
 
   const clearError = useCallback(() => setError(null), []);
+  const togglePause = useCallback(() => {
+    if (mode === 'local') { setPaused((value) => !value); setNotice(null); }
+  }, [mode]);
+  const restart = useCallback(() => {
+    if (mode === 'local' && config) startLocal(config.seats);
+  }, [mode, config, startLocal]);
+  const undo = useCallback(() => {
+    if (mode !== 'local' || !config || !undoStates.current.length) return;
+    let previous = undoStates.current.pop()!;
+    while (undoStates.current.length && config.seats[previous.currentPlayer].kind !== 'human') previous = undoStates.current.pop()!;
+    setState(previous);
+    setManualHistory([]);
+    setSelectedKey(null);
+    setAnimation(null);
+    setPromotionMove(null);
+    setPaused(true);
+    setError(null);
+    setNotice('Move taken back. Resume when you are ready.');
+  }, [mode, config]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.repeat || target?.closest('input, select, textarea, button, [contenteditable="true"]')) return;
+      if (event.code === 'Space' && mode === 'local') { event.preventDefault(); togglePause(); }
+      if (event.key === 'Escape') { setSelectedKey(null); setPromotionMove(null); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mode, togglePause]);
 
   useEffect(() => () => closeSocket(), [closeSocket]);
 
   useEffect(() => {
-    if (!state || !game || mode !== 'local' || !config || game.winner) return undefined;
+    if (!state || !game || mode !== 'local' || !config || game.winner || game.stalemate || paused) return undefined;
     const seatConfig = config.seats[game.currentPlayer];
     if (!seatConfig || seatConfig.kind !== 'bot' || game.eliminated.includes(game.currentPlayer)) return undefined;
     setIsThinking(true);
     const difficulty = seatConfig.difficulty ?? ('medium' as Difficulty);
-    const timer = window.setTimeout(() => {
-      const move = aiMove(state, difficulty, game.currentPlayer);
-      const fallback = move ?? game.legalMoves[0]?.move ?? null;
-      if (fallback) commitLocalMove(fallback, state, game.currentPlayer);
-      else setNotice(`${formatSeat(game.currentPlayer)} has no legal moves.`);
-      setIsThinking(false);
-    }, difficulty === 'hard' ? 620 : difficulty === 'medium' ? 470 : 300);
-    return () => {
-      window.clearTimeout(timer);
+    let worker: Worker | undefined;
+    let finished = false;
+    let watchdog: number | undefined;
+    const finish = (move?: Move | null, failed = false) => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(watchdog);
+      worker?.terminate();
+      const chosen = move ?? game.legalMoves[0]?.move;
+      if (chosen) commitLocalMove(chosen, state, game.currentPlayer);
+      if (failed) setNotice('The bot reached its search limit and played a legal fallback move.');
       setIsThinking(false);
     };
-  }, [commitLocalMove, config, game, mode, state]);
+    const timer = window.setTimeout(() => {
+      try {
+        worker = new Worker(new URL('../ai.worker.ts', import.meta.url), { type: 'module' });
+        worker.onmessage = (event: MessageEvent<{ move?: Move | null; error?: string }>) => finish(event.data.move, Boolean(event.data.error));
+        worker.onerror = () => finish(null, true);
+        watchdog = window.setTimeout(() => finish(null, true), 12000);
+        worker.postMessage({ state, difficulty });
+      } catch { finish(null, true); }
+    }, 350);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearTimeout(watchdog);
+      finished = true;
+      worker?.terminate();
+      setIsThinking(false);
+    };
+  }, [commitLocalMove, config, game, mode, state, paused]);
 
   return {
     mode,
@@ -415,6 +528,15 @@ export function useGameSession(): UseGameSessionResult {
     error,
     notice,
     isThinking,
+    paused,
+    canUndo: mode === 'local' && undoStates.current.length > 0,
+    promotionMove,
+    togglePause,
+    undo,
+    restart,
+    playMove: chooseMove,
+    promote,
+    cancelPromotion: () => setPromotionMove(null),
     startLocal,
     startOnline,
     selectPosition,

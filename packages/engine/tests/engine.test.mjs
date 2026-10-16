@@ -92,6 +92,13 @@ const promotionMove = getLegalMovesForPiece(promotionState, "P0-pawn").find((mov
 assert.equal(promotionMove.promotion, "queen");
 const promoted = applyMove(promotionState, promotionMove);
 assert.equal(promoted.pieces.find((item) => item.id === "P0-pawn").type, "queen");
+for (const promotion of ["queen", "rook", "bishop", "knight"]) {
+  const choice = getLegalMovesForPiece(promotionState, "P0-pawn").find((move) => move.to === "7,0" && move.promotion === promotion);
+  assert.ok(choice, `${promotion} must be offered as a legal promotion`);
+  assert.equal(applyMove(promotionState, choice).pieces.find((item) => item.id === "P0-pawn").type, promotion);
+}
+assert.equal(promotionState.pieces.find((item) => item.id === "P0-pawn").type, "pawn", "promotion must not mutate the input");
+assert.throws(() => applyMove(promotionState, { ...promotionMove, promotion: "king" }), /Illegal move/);
 
 // Check detection and self-check filtering on a compact hand-authored state.
 const checkState = withoutInitialPieces(initial, [
@@ -154,6 +161,26 @@ assert.equal(neutral.eliminatedPlayers[0], "P1");
 assert.equal(neutral.pieces.some((item) => item.owner === "P1" && item.neutral), true);
 assert.equal(neutral.currentPlayer, "P2");
 assert.equal(getNextActivePlayer(neutral, "P0"), "P2");
+
+// Capturing a king can resolve check by eliminating the checking army.
+for (const eliminationMode of ["disappear", "neutral"]) {
+  const checkedCapture = withoutInitialPieces(createInitialGame({ eliminationMode }), captureState.pieces.map((item) =>
+    item.id === "P1-rook" ? { ...item, position: "2,0" } : item));
+  assert.equal(isInCheck(checkedCapture, "P0"), true);
+  const result = applyMove(checkedCapture, captureMove);
+  assert.equal(isInCheck(result, "P0"), false);
+  assert.deepEqual(result.eliminatedPlayers, ["P1"]);
+}
+
+// Every consecutive invalid next seat must be resolved before handing over the turn.
+const missingKings = withoutInitialPieces(initial, [
+  { id: "P0-king", type: "king", owner: "P0", position: "0,0", hasMoved: false, neutral: false },
+  { id: "P0-rook", type: "rook", owner: "P0", position: "0,1", hasMoved: false, neutral: false },
+]);
+const resolved = applyMove(missingKings, { pieceId: "P0-rook", from: "0,1", to: "0,2" });
+assert.deepEqual(resolved.eliminatedPlayers, ["P1", "P2"]);
+assert.equal(resolved.winner, "P0");
+assert.equal(resolved.lastMove.isCheck, false);
 
 // Neutral pieces are blockers, not capturable material.
 const blockerState = withoutInitialPieces(createInitialGame({ eliminationMode: "neutral" }), [

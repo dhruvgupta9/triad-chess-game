@@ -53,6 +53,14 @@ in the deployment environment; never commit them.
 
 ### Run locally
 
+Local tables include pause/resume (Space), undo to the previous human turn,
+new game/rematch, and a rules guide. Undo pauses the board so bots do not
+immediately replay. Escape cancels selection or promotion. The Table tools
+section also offers a keyboard-accessible list of legal moves. Pawns can
+promote to queen, rook, bishop, or knight; stalemate ends the table in a draw.
+Bot searches run in a cancellable worker with a 12-second search limit and a
+legal fallback move, keeping pause and leave responsive.
+
 Start both the server and browser client in development mode:
 
 ```sh
@@ -182,6 +190,13 @@ The server owns rooms and authoritative game state. A typical online match is:
 5. At game over, the server broadcasts the final snapshot. The room can be
    reset with `game:reset` for a rematch without changing the engine rules.
 
+All active seats must be occupied before the server accepts moves. The client
+shows the live roster and waiting state. Disconnected players return to setup
+and explicitly rejoin with the room code; seats are not reserved, and an empty
+room is deleted. Automatic reconnect is disabled to prevent a host silently
+creating a new room. Room reset requests require a current participant's
+connection ID; the public room code alone cannot reset a game.
+
 The transport may be WebSocket-based, but the payload contract remains plain
 JSON so it can also be tested offline and replayed in a CLI or future mobile
 client.
@@ -224,6 +239,13 @@ Run the individual checks when diagnosing a failure:
 npm run typecheck
 npm run build
 npm run test:workspaces
+```
+
+After building, run the real HTTP/Socket.io smoke check against an isolated
+server on a temporary localhost port (no external network service required):
+
+```sh
+node scripts/smoke-online.mjs
 ```
 
 Build output is workspace-local and should not be committed. Remove it with:
