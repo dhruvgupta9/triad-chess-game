@@ -14,7 +14,7 @@ help:
 		'  make dev           Run the client and server development processes' \
 		'  make build         Build every workspace' \
 		'  make test          Build and run the offline workspace test suites' \
-		'  make typecheck     Run the TypeScript project-reference check' \
+		'  make typecheck     Run every workspace TypeScript check' \
 		'  make start         Start the production server and client preview' \
 		'  make clean         Remove workspace build output' \
 		'  make docker-build  Build the production Docker image' \

@@ -23,6 +23,7 @@
     "tsconfig.json"
   ],
   "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node tests/engine.test.mjs"
   }
 }
