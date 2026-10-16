@@ -83,7 +83,7 @@ The workspaces have deliberately narrow responsibilities:
 packages/engine   Pure TypeScript game state, coordinates, move legality,
                   captures, turn/elimination rules, and AI decisions.
 packages/server   Node.js authoritative API and realtime room transport;
-                  owns sessions, validation, revisions, and broadcasts.
+                  owns sessions, validation, and broadcasts.
 packages/client   React application shell, Phaser board renderer, HUD,
                   input handling, and realtime client state.
 ```
@@ -300,14 +300,15 @@ module-resolution settings.
 
 ### Port 3001 or 5173 is already in use
 
-Change `PORT`/`CLIENT_PORT` and the corresponding `PUBLIC_*`, `VITE_*`, and
-`CORS_ORIGIN` values in `.env`. For Docker, change the host side of the port
-mapping, for example `--publish 13001:3001`.
+Change `PORT`/`CLIENT_PORT` and the corresponding `PUBLIC_*` and
+`CORS_ORIGIN` values in `.env`; change `VITE_*` values in
+`packages/client/.env`. For Docker, change the host side of the port mapping,
+for example `--publish 13001:3001`.
 
 ### The browser connects but moves are rejected
 
-Refresh the room snapshot first. A stale revision, wrong active seat, or an
-eliminated seat is intentionally rejected by the authoritative server. Check
+Refresh the room snapshot first. A wrong active seat, eliminated seat, or an
+illegal move is intentionally rejected by the authoritative server. Check
 that the browser's `PUBLIC_API_URL`/`PUBLIC_WS_URL` point to the same host and
 port exposed by the server and that `CORS_ORIGIN` matches the actual client
 origin.
